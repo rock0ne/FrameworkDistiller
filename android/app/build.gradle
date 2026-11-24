@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+    id 'com.chaquo.python'
+}
+
+android {
+    namespace 'uk.vijaukatt.frameworkdistiller'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'uk.vijaukatt.frameworkdistiller'
+        minSdk 26
+        targetSdk 35
+        versionCode 5
+        versionName '0.4.1'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version = '3.12'
+        buildPython('python3')
+        pip {
+            install('pypdf==6.10.0')
+            install('striprtf==0.0.35')
+            install('defusedxml==0.7.1')
+        }
+    }
+}

@@ -1,0 +1,11 @@
+data/
+__pycache__/
+.pytest_cache/
+*.pyc
+.build/
+dist/
+.venv/
+android/.gradle/
+android/app/build/
+android/app/src/main/python/distiller/
+android/app/src/main/assets/static/

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Framework Distiller — local study</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#results">Skip to study cards</a>
+  <header class="masthead">
+    <div class="brand"><span class="mark" aria-hidden="true">FD</span><div><strong>Framework Distiller</strong><small>Read once. Map everywhere.</small></div></div>
+    <div class="local-pill" id="activity-badge">● Local study · AI off by default</div>
+  </header>
+  <div class="boundary">Distilled summary — verify authoritative wording against pinned source citation. Auditor risks, tests and traps are interpretations, not quotes or legal advice. “Mastered” is self-reported study progress, not validated competence.</div>
+  <div class="layout">
+    <aside class="side" aria-label="Sources and filters">
+      <section class="panel">
+        <h2>Official NIST sources</h2>
+        <p class="muted">Download only when you choose. Each exact file is kept locally with a SHA-256 pin.</p>
+        <div id="official-sources" class="stack"></div>
+      </section>
+      <details class="panel" id="storage-settings">
+        <summary class="ai-summary">Storage and import location</summary>
+        <p class="small">Your current study library is <code id="library-path" class="path"></code> Changing location does not move or delete an existing library; select its previous folder to return to it. No files are imported automatically.</p>
+        <div id="desktop-storage-controls" class="source-form">
+          <label>Study library folder (database and pinned copies) <input id="storage-path" type="text" maxlength="1024" spellcheck="false" autocomplete="off"></label>
+          <label>Import inbox folder (leave blank to use the library’s inbox) <input id="inbox-setting" type="text" maxlength="1024" spellcheck="false" autocomplete="off"></label>
+          <button id="save-storage" type="button">Use these folders</button>
+          <p class="small">Enter absolute folder paths you control. A new library starts empty; the old one remains untouched. Network or removable folders must be available whenever you use them.</p>
+          <button id="quit-app" type="button" class="secondary">Quit desktop app</button>
+        </div>
+        <p id="android-storage-info" class="small" hidden>Android keeps its working database in private app storage. Tap “Local file” below to browse and import from any folder the Android picker can access; use Export to choose where your notes are saved. Android does not expose a writable database path to this app.</p>
+        <p id="storage-message" class="small" role="status" aria-live="polite"></p>
+      </details>
+      <section class="panel">
+        <h2>Add a document</h2>
+        <p class="muted">Choose a local reading file, or pull a direct public link from NIST, Bank of England, FCA, NCSC, IIA or OWASP. Local files stay on this device.</p>
+        <div class="source-form">
+          <label>Title <input id="source-title" type="text" maxlength="160" placeholder="PRA SS2/21" required></label>
+          <label>Source URL (required for link pull; optional for local file) <input id="source-url" type="url" maxlength="2048" placeholder="https://www.bankofengland.co.uk/…"></label>
+          <label>Version (optional for local file) <input id="source-version" type="text" maxlength="120" placeholder="Rev. 1 / March 2026"></label>
+          <label>Publication date (optional for local file) <input id="source-date" type="text" maxlength="40" placeholder="YYYY-MM or YYYY-MM-DD"></label>
+          <label>Expected SHA-256 (optional) <input id="source-sha" type="text" maxlength="64" placeholder="64 hex characters if published"></label>
+          <label>Local file <input id="source-file" type="file" accept=".pdf,.epub,.docx,.odt,.pptx,.rtf,.md,.markdown,.txt,.text,.html,.htm"></label>
+          <div class="source-actions"><button id="upload-file" type="button">Add selected file</button><button id="pull-link" type="button">Pull official link</button></div>
+          <p id="source-message" class="small" role="status" aria-live="polite">Local: PDF, EPUB, DOCX, ODT, PPTX, RTF, Markdown, text and HTML. Each file is hash-pinned; an optional URL is not byte-verified. Public link pulls are restricted to approved official hosts.</p>
+        </div>
+        <details><summary>Import folder (inbox)</summary>
+          <p class="muted">Files in this folder are listed after you press Refresh. A <code>.source.json</code> sidecar is optional; without one, the file is labelled “Local copy” with no claimed publisher link.</p>
+          <code id="inbox-path" class="path"></code>
+          <button id="refresh-inbox" type="button" class="secondary">Refresh inbox</button>
+          <p id="inbox-summary" class="small" role="status" aria-live="polite"></p>
+          <div id="inbox-files" class="stack"></div>
+        </details>
+      </section>
+      <section class="panel">
+        <h2>Pinned library</h2>
+        <div id="library" class="stack"></div>
+      </section>
+      <details class="panel" id="ai-settings">
+        <summary class="ai-summary">Optional AI study assistant · off by default</summary>
+        <p class="muted">Off until you add your own API key. Keys stay in this app's memory only and disappear when it closes; they are never bundled, saved to the study database, or exported. Each question sends only the displayed card's source excerpt (up to 4,000 characters) and the question you type to your chosen provider. Notes and answers are never sent. Provider API charges are yours; a ChatGPT, Claude or Gemini subscription may not include API use.</p>
+        <p class="small">Do not send confidential employer policies, personal data, or regulated material to a personal API account unless you are authorised.</p>
+        <label class="ai-label">Provider <select id="ai-provider"><option value="">Off</option><option value="openai">ChatGPT (OpenAI API)</option><option value="anthropic">Claude (Anthropic API)</option><option value="gemini">Gemini (Google API)</option></select></label>
+        <label class="ai-label">Model ID <input id="ai-model" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="Choose a provider for the default model"></label>
+        <p class="small">You can change this session-only model ID if your API account needs a different supported model. Check the provider's current model list; no cloud call is made to validate it here.</p>
+        <label class="ai-label">Your API key for this session <input id="ai-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your own key"></label>
+        <div class="source-actions"><button type="button" id="ai-use-key">Use key</button><button type="button" id="ai-forget" class="secondary">Forget key</button></div>
+        <p id="ai-status" class="small" role="status" aria-live="polite">AI is off. No key is included.</p>
+        <p class="small">Get a key from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI</a>, <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Anthropic</a>, or <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>. Check that provider's current pricing and data terms first.</p>
+      </details>
+    </aside>
+    <main id="results" tabindex="-1">
+      <section class="hero">
+        <div><p class="eyebrow">AUDITOR STUDY DESK</p><h1>Only the decision-useful parts.</h1><p>Scan the core rule, test it like a senior auditor, then open the exact source. Similar themes sit together—never treated as equivalent obligations.</p></div>
+        <div class="hero-stat"><strong id="shown-count">0</strong><span id="shown-label">cards in view</span></div>
+      </section>
+      <section class="toolbar" aria-label="Study filters">
+        <label>Search <input id="search" type="search" placeholder="Control, source, or topic" autocomplete="off"></label>
+        <label>Theme <select id="theme"><option value="">All themes</option></select></label>
+        <label>Depth <select id="depth"><option value="">All depths</option><option value="Senior / Executive" selected>Senior / Executive</option><option value="Core">Core</option></select></label>
+        <label>Progress <select id="state"><option value="">All</option><option value="unread">Unread</option><option value="read">Read</option><option value="mastered">Mastered</option></select></label>
+        <label>Study set <select id="study-set"><option value="focus">Focus 10 unread</option><option value="all">All matching</option></select></label>
+        <button id="export" class="secondary" type="button">Export all filtered</button>
+      </section>
+      <div class="summary-row"><span id="message" role="status" aria-live="polite"></span><button type="button" id="clear-filters" class="link-button">Clear filters</button></div>
+      <div id="cards" class="cards"></div>
+      <section id="empty" class="empty" hidden><h2>No cards yet</h2><p>Import an official NIST source on the left, or adjust the filters. The first download may take a few seconds.</p></section>
+    </main>
+  </div>
+</body>
+</html>
