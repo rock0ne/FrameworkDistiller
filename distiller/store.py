@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .distill import THEMES, make_card
 from .ingest import Unit
+from .reader import ReadingDocument
 
 
 def utc_now() -> str:
@@ -67,7 +69,115 @@ class Store:
                 );
                 CREATE INDEX IF NOT EXISTS idx_cards_theme ON cards(theme, depth, priority);
                 CREATE INDEX IF NOT EXISTS idx_units_doc ON units(document_id);
+                CREATE TABLE IF NOT EXISTS reader_meta (
+                    document_id TEXT PRIMARY KEY REFERENCES documents(id),
+                    structure_kind TEXT NOT NULL, omitted_blank_pages INTEGER NOT NULL,
+                    built_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS reader_chapters (
+                    document_id TEXT NOT NULL REFERENCES documents(id),
+                    chapter_no INTEGER NOT NULL, title TEXT NOT NULL,
+                    front_matter INTEGER NOT NULL,
+                    PRIMARY KEY(document_id, chapter_no)
+                );
+                CREATE TABLE IF NOT EXISTS reader_pages (
+                    document_id TEXT NOT NULL REFERENCES documents(id),
+                    page_no INTEGER NOT NULL, chapter_no INTEGER NOT NULL,
+                    label TEXT NOT NULL, source_ref TEXT NOT NULL,
+                    source_link TEXT NOT NULL, source_text TEXT NOT NULL,
+                    front_matter INTEGER NOT NULL,
+                    PRIMARY KEY(document_id, page_no)
+                );
+                CREATE INDEX IF NOT EXISTS idx_reader_pages_chapter
+                    ON reader_pages(document_id, chapter_no, page_no);
+                CREATE TABLE IF NOT EXISTS study_artifacts (
+                    cache_key TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id),
+                    action TEXT NOT NULL, scope_id TEXT NOT NULL, lens TEXT NOT NULL,
+                    provider TEXT NOT NULL, model TEXT NOT NULL, source_digest TEXT NOT NULL,
+                    input_chars INTEGER NOT NULL, body_json TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_study_artifacts_doc ON study_artifacts(document_id);
             """)
+
+    def document(self, document_id: str) -> dict:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
+        if row is None:
+            raise ValueError("Unknown document")
+        return dict(row)
+
+    def reader_ready(self, document_id: str) -> bool:
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM reader_meta WHERE document_id=?",
+                              (document_id,)).fetchone() is not None
+
+    def save_reader(self, document_id: str, reading: ReadingDocument) -> None:
+        with self.connect() as db:
+            if not db.execute("SELECT 1 FROM documents WHERE id=?", (document_id,)).fetchone():
+                raise ValueError("Unknown document")
+            if db.execute("SELECT 1 FROM reader_meta WHERE document_id=?", (document_id,)).fetchone():
+                return  # An already-pinned structure is immutable across restarts.
+            for chapter in reading.chapters:
+                db.execute("INSERT INTO reader_chapters VALUES (?,?,?,?)",
+                           (document_id, chapter.number, chapter.title, int(chapter.front_matter)))
+                for page in chapter.pages:
+                    db.execute("INSERT INTO reader_pages VALUES (?,?,?,?,?,?,?,?)",
+                               (document_id, page.number, chapter.number, page.label,
+                                page.source_ref, page.source_link, page.text, int(page.front_matter)))
+            db.execute("INSERT INTO reader_meta VALUES (?,?,?,?)",
+                       (document_id, reading.structure_kind, reading.omitted_blank_pages, utc_now()))
+
+    def reader_structure(self, document_id: str) -> dict:
+        doc = self.document(document_id)
+        with self.connect() as db:
+            meta = db.execute("SELECT * FROM reader_meta WHERE document_id=?", (document_id,)).fetchone()
+            if meta is None:
+                raise ValueError("Reading structure not built")
+            chapters = [dict(row) for row in db.execute(
+                "SELECT * FROM reader_chapters WHERE document_id=? ORDER BY chapter_no", (document_id,))]
+            pages = [dict(row) for row in db.execute(
+                """SELECT page_no,chapter_no,label,source_ref,source_link,front_matter
+                   FROM reader_pages WHERE document_id=? ORDER BY page_no""", (document_id,))]
+        for chapter in chapters:
+            chapter["pages"] = [page for page in pages if page["chapter_no"] == chapter["chapter_no"]]
+        return {"document": {key: doc[key] for key in ("id", "title", "sha256", "version",
+                "publication_date", "provenance", "source_url", "format")},
+                "structure_kind": meta["structure_kind"],
+                "omitted_blank_pages": meta["omitted_blank_pages"], "chapters": chapters}
+
+    def reader_pages(self, document_id: str, chapter_no: int | None = None,
+                     page_no: int | None = None) -> list[dict]:
+        where, params = ["document_id=?"], [document_id]
+        if chapter_no is not None:
+            where.append("chapter_no=?")
+            params.append(chapter_no)
+        if page_no is not None:
+            where.append("page_no=?")
+            params.append(page_no)
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM reader_pages WHERE " + " AND ".join(where) +
+                              " ORDER BY page_no", params).fetchall()
+        return [dict(row) for row in rows]
+
+    def cached_artifact(self, cache_key: str) -> dict | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM study_artifacts WHERE cache_key=?", (cache_key,)).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        item["body"] = json.loads(item.pop("body_json"))
+        item["cached"] = True
+        return item
+
+    def save_artifact(self, item: dict) -> dict:
+        with self.connect() as db:
+            db.execute("""INSERT OR IGNORE INTO study_artifacts
+                (cache_key,document_id,action,scope_id,lens,provider,model,source_digest,
+                 input_chars,body_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (item["cache_key"], item["document_id"], item["action"], item["scope_id"],
+                 item["lens"], item["provider"], item["model"], item["source_digest"],
+                 item["input_chars"], json.dumps(item["body"], ensure_ascii=False), utc_now()))
+        return self.cached_artifact(item["cache_key"])
 
     def import_document(self, record: dict, units: list[Unit], local_name: str) -> dict:
         doc_id = f"{record['source_id']}@{record['sha256'][:16]}"
@@ -173,7 +283,7 @@ class Store:
                         COALESCE(p.state,'unread') AS state, COALESCE(p.answer,'') AS answer
                  FROM cards c JOIN units u ON u.id=c.unit_id
                  JOIN documents d ON d.id=u.document_id
-                 LEFT JOIN progress p ON p.card_id=c.id""" + clause + " ORDER BY c.priority, d.title, u.ref LIMIT ?"
+                 LEFT JOIN progress p ON p.card_id=c.id""" + clause + " ORDER BY d.title, u.rowid LIMIT ?"
         params.append(min(max(limit, 1), 500))
         with self.connect() as db:
             return [dict(row) for row in db.execute(sql, params).fetchall()]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import hmac
 import os
 import re
@@ -15,12 +16,16 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import __version__
-from .ai import AIError, StudyAI
+from .ai import AIError, StudyAI, MODELS
 from .catalog import OFFICIAL, official_list
 from .distill import THEMES
 from .ingest import (FORMAT_BY_EXTENSION, MAX_BYTES, IngestError, download_official,
                      download_public, extract_units, read_dropin, read_uploaded)
 from .store import Store
+from .reader import extract_reading
+from .study import (ACTIONS, LENSES, ai_prompt, artifact_markdown, artifact_svg,
+                    cache_key, challenge_prompt,
+                    choose_scope, offline_body, parse_ai_answer, preview)
 from .storage import folder_path, save_paths
 
 
@@ -100,10 +105,12 @@ class LocalApp:
         units = extract_units(data, record)
         return self._commit_source(data, record, units)
 
-    def import_dropin(self, name: str) -> dict:
-        data, record = read_dropin(self.inbox, name)
+    def import_dropin(self, name: str, *, max_batch_bytes: int = MAX_BYTES) -> dict:
+        data, record = read_dropin(self.inbox, name, max_batch_bytes=max_batch_bytes)
         units = extract_units(data, record)
-        return self._commit_source(data, record, units)
+        result = self._commit_source(data, record, units)
+        result["source_bytes"] = len(data)
+        return result
 
     def import_uploaded(self, data: bytes, name: str, meta: dict) -> dict:
         data, record = read_uploaded(data, name, meta)
@@ -125,6 +132,76 @@ class LocalApp:
                  "has_sidecar": (self.inbox / f"{p.name}.source.json").is_file(),
                  "importable": p.stat().st_size <= MAX_BYTES}
                 for p in sorted(files, key=lambda item: item.name.lower())[:200]]
+
+    def ensure_reader(self, document_id: str) -> None:
+        """Build once from the exact pinned bytes; never trust a mutable inbox copy."""
+        if not isinstance(document_id, str) or len(document_id) > 256:
+            raise ValueError("Invalid document ID")
+        doc = self.store.document(document_id)
+        if self.store.reader_ready(document_id):
+            return
+        local_name = doc["local_name"]
+        if (not isinstance(local_name, str) or not re.fullmatch(r"[a-f0-9]{64}\.[a-z0-9-]+", local_name)
+                or not local_name.startswith(doc["sha256"] + ".")):
+            raise ValueError("Pinned source filename is invalid")
+        target = self.sources / local_name
+        if target.is_symlink() or not target.is_file():
+            raise ValueError("Pinned source copy is unavailable")
+        with target.open("rb") as stream:
+            data = stream.read(MAX_BYTES + 1)
+        if len(data) > MAX_BYTES or hashlib.sha256(data).hexdigest() != doc["sha256"]:
+            raise ValueError("Pinned source copy failed its SHA-256 check")
+        self.store.save_reader(document_id, extract_reading(data, doc))
+
+    def study_generate(self, body: dict) -> dict:
+        document_id = body.get("document_id", "")
+        action = body.get("action", "")
+        lens = body.get("lens", "general")
+        mode = body.get("mode", "offline")
+        if lens not in LENSES or action not in ACTIONS or mode not in {"offline", "ai"}:
+            raise ValueError("Choose a supported action, lens and mode")
+        question = body.get("question", "") if action.startswith("ask_") else ""
+        if action.startswith("ask_") and (mode != "ai" or not isinstance(question, str)
+                                           or not 1 <= len(question.strip()) <= 500):
+            raise ValueError("Ask AI needs a question of 1–500 characters")
+        question = question.strip() if isinstance(question, str) else ""
+        self.ensure_reader(document_id)
+        doc, pages, scope_id = choose_scope(self.store, document_id, action,
+                                           body.get("chapter_no"), body.get("page_no"))
+        if not pages:
+            raise ValueError("No extractable text in this scope")
+        source_digest = hashlib.sha256("\n".join(page["source_text"] for page in pages).encode()).hexdigest()
+        provider = body.get("provider", "") if mode == "ai" else "offline"
+        if mode == "ai" and provider not in MODELS:
+            raise ValueError("Choose a supported AI provider")
+        model = self.ai.status()["models"][provider] if mode == "ai" else "structural-v1"
+        key = cache_key(doc["sha256"], action, scope_id, lens, provider, model,
+                        source_digest, question)
+        cached = self.store.cached_artifact(key)
+        if cached:
+            return cached
+        if mode == "offline":
+            structure = self.store.reader_structure(document_id) if action == "file_map" else None
+            result = offline_body(doc, pages, action, scope_id, structure)
+            input_chars = sum(len(page["source_text"]) for page in pages)
+        else:
+            exact = preview(self.store, document_id, action, lens, provider, model,
+                            body.get("chapter_no"), body.get("page_no"), question)
+            if body.get("approval_hash") != exact["approval_hash"]:
+                raise ValueError("Review the exact AI text preview before sending")
+            answer = self.ai.study(provider, exact["text"], exact["instruction"])
+            result = parse_ai_answer(answer["answer"], action, pages, set(exact["source_refs"]))
+            result["coverage"] = exact["coverage"]
+            result["disclosure"] += " " + exact["coverage_disclosure"]
+            if exact["coverage"]["truncated_pages"]:
+                result["title"] = "Excerpt-only interpretation · " + result["title"]
+            input_chars = exact["characters"]
+        if question:
+            result["question"] = question
+        return self.store.save_artifact({"cache_key": key, "document_id": document_id,
+            "action": action, "scope_id": scope_id, "lens": lens, "provider": provider,
+            "model": model, "source_digest": source_digest, "input_chars": input_chars,
+            "body": result})
 
 
 def _as_markdown(cards: list[dict]) -> str:
@@ -249,6 +326,42 @@ def make_handler(app: LocalApp):
                                             params.get("document_id", ""))
                     self._json(200, {"cards": cards, "count": len(cards)})
                     return
+                if route == "/api/reader":
+                    document_id = params.get("document_id", "")
+                    app.ensure_reader(document_id)
+                    self._json(200, app.store.reader_structure(document_id))
+                    return
+                if route == "/api/reader/page":
+                    document_id = params.get("document_id", "")
+                    app.ensure_reader(document_id)
+                    try:
+                        page_no = int(params.get("page_no", "0"))
+                    except ValueError:
+                        raise ValueError("Choose a valid page") from None
+                    if not 1 <= page_no <= 2000:
+                        raise ValueError("Choose a valid page")
+                    pages = app.store.reader_pages(document_id, page_no=page_no)
+                    if not pages:
+                        raise ValueError("Unknown page")
+                    page = pages[0]
+                    page["challenge"] = challenge_prompt(params.get("lens", "general"), page)
+                    self._json(200, page)
+                    return
+                if route == "/api/study/export":
+                    key, fmt = params.get("key", ""), params.get("format", "")
+                    if not re.fullmatch(r"[a-f0-9]{64}", key) or fmt not in {"md", "svg"}:
+                        raise ValueError("Invalid study export")
+                    item = app.store.cached_artifact(key)
+                    if item is None:
+                        raise ValueError("Study result is unavailable")
+                    if fmt == "md":
+                        payload = artifact_markdown(item).encode("utf-8")
+                        content_type = "text/markdown; charset=utf-8"
+                    else:
+                        payload = artifact_svg(item).encode("utf-8")
+                        content_type = "image/svg+xml; charset=utf-8"
+                    self._bytes(200, payload, content_type, f"framework-study-{key[:12]}.{fmt}")
+                    return
                 if route == "/api/export":
                     cards = app.store.cards(params.get("theme", ""), params.get("depth", ""),
                                             params.get("q", ""), params.get("state", ""),
@@ -258,7 +371,12 @@ def make_handler(app: LocalApp):
                     return
                 files = {"/": ("index.html", "text/html; charset=utf-8"),
                          "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-                         "/style.css": ("style.css", "text/css; charset=utf-8")}
+                         "/style.css": ("style.css", "text/css; charset=utf-8"),
+                         "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+                         "/sw.js": ("sw.js", "text/javascript; charset=utf-8"),
+                         "/offline.html": ("offline.html", "text/html; charset=utf-8"),
+                         "/icon-192.png": ("icon-192.png", "image/png"),
+                         "/icon-512.png": ("icon-512.png", "image/png")}
                 if route in files:
                     name, content_type = files[route]
                     self._bytes(200, (STATIC / name).read_bytes(), content_type)
@@ -321,7 +439,7 @@ def make_handler(app: LocalApp):
                     name = body.get("name", "")
                     if not isinstance(name, str):
                         raise ValueError("Invalid inbox filename")
-                    result = app.import_dropin(name)
+                    result = app.import_dropin(name, max_batch_bytes=body.get("max_batch_bytes", MAX_BYTES))
                 elif route == "/api/ingest/url":
                     result = app.import_url(body)
                 elif route == "/api/storage":
@@ -350,6 +468,8 @@ def make_handler(app: LocalApp):
                     result = {"saved": True}
                 elif route == "/api/ai/key":
                     result = app.ai.use_key(body.get("provider"), body.get("key"), body.get("model"))
+                elif route == "/api/ai/test":
+                    result = app.ai.test_connection(body.get("provider"))
                 elif route == "/api/ai/forget":
                     result = app.ai.forget(body.get("provider"))
                 elif route == "/api/ai/ask":
@@ -358,6 +478,19 @@ def make_handler(app: LocalApp):
                         raise ValueError("Invalid card ID")
                     excerpt = app.store.source_excerpt(card_id)
                     result = app.ai.ask(body.get("provider"), excerpt, body.get("question"))
+                elif route == "/api/study/preview":
+                    document_id = body.get("document_id", "")
+                    app.ensure_reader(document_id)
+                    provider = body.get("provider", "")
+                    if provider not in MODELS:
+                        raise ValueError("Choose a supported AI provider")
+                    model = app.ai.status()["models"][provider]
+                    result = preview(app.store, document_id, body.get("action", ""),
+                                     body.get("lens", "general"), provider, model,
+                                     body.get("chapter_no"), body.get("page_no"),
+                                     body.get("question", ""))
+                elif route == "/api/study/generate":
+                    result = app.study_generate(body)
                 else:
                     self._json(404, {"error": "Not found"})
                     return
@@ -373,7 +506,12 @@ def make_handler(app: LocalApp):
             # Only route/status; never log request body or extracted document text.
             route = urlsplit(self.path).path
             if sys.stderr is not None:
-                sys.stderr.write(f"{self.command} {route}\n")
+                try:
+                    sys.stderr.write(f"{self.command} {route}\n")
+                except (OSError, ValueError):
+                    # A windowless packaged EXE may inherit a stream that closes
+                    # after launcher detachment. Logging must not drop requests.
+                    pass
 
     return Handler
 

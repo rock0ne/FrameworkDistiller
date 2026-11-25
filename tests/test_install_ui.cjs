@@ -1,0 +1,20 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const root = path.resolve(__dirname, '..');
+const html = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
+const script = fs.readFileSync(path.join(root, 'static', 'app.js'), 'utf8');
+const button = html.match(/<button id="install-app"[^>]*>/)?.[0];
+assert.ok(button, 'install button exists');
+assert.doesNotMatch(button, /\bhidden\b/, 'button is not hidden before Edge emits its prompt');
+assert.match(html, /id="install-help"/);
+assert.match(html, /edge:\/\/apps/);
+assert.match(html, /Install this site as an app/);
+assert.match(html, /not a temporary preview address/);
+assert.match(script, /if \(!installPrompt\) \{ showInstallHelp\(\); return; \}/);
+assert.match(script, /state\.storage\.platform === 'desktop' && !state\.storage\.editable/);
+assert.match(script, /installButton\.textContent = isStandalone\(\) \? 'Manage installed app' : 'Install as app'/);
+assert.match(script, /installButton\.hidden = nativeAndroid/);
+assert.doesNotMatch(script, /appinstalled[\s\S]{0,120}installButton\.hidden = true/);
+console.log('Install control and no-prompt fallback checks passed');

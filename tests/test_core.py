@@ -101,6 +101,31 @@ class SourceTests(unittest.TestCase):
             self.assertEqual(record["provenance"], "owner_uploaded_local_hash_only")
             self.assertEqual(record["sha256"], hashlib.sha256(data).hexdigest())
 
+    def test_dropin_enforces_remaining_batch_bytes_on_actual_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp)
+            (inbox / "study.md").write_bytes(b"# Source\n" + b"A" * 100)
+            with self.assertRaisesRegex(IngestError, "remaining batch limit"):
+                read_dropin(inbox, "study.md", max_batch_bytes=50)
+            saved, _ = read_dropin(inbox, "study.md", max_batch_bytes=109)
+            self.assertEqual(len(saved), 109)
+            for invalid in (0, -1, True, 1.5, 1024 * 1024 * 1024 + 1):
+                with self.assertRaisesRegex(IngestError, "Invalid remaining batch budget"):
+                    read_dropin(inbox, "study.md", max_batch_bytes=invalid)
+
+    def test_dropin_import_reports_actual_bytes_for_batch_accounting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inbox = root / "inbox"
+            inbox.mkdir()
+            data = b"# Source\n\nA reviewer checks the population and the evidence behind each decision."
+            (inbox / "study.md").write_bytes(data)
+            app = LocalApp(root / "data", inbox_root=inbox)
+            result = app.import_dropin("study.md", max_batch_bytes=len(data))
+            self.assertEqual(result["source_bytes"], len(data))
+            with self.assertRaisesRegex(IngestError, "remaining batch limit"):
+                app.import_dropin("study.md", max_batch_bytes=len(data) - 1)
+
     def test_invalid_sidecar_does_not_silently_fall_back_to_local_import(self):
         with tempfile.TemporaryDirectory() as tmp:
             inbox = Path(tmp)
@@ -503,6 +528,60 @@ class AITests(unittest.TestCase):
 
 
 class ServerTests(unittest.TestCase):
+    def test_closed_windowless_log_stream_never_drops_later_requests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = LocalApp(Path(tmp) / "data")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            base = f"http://127.0.0.1:{server.server_port}"
+            closed = io.StringIO()
+            closed.close()
+            try:
+                with patch("distiller.server.sys.stderr", closed):
+                    for _ in range(3):
+                        with urllib.request.urlopen(base + "/", timeout=5) as response:
+                            self.assertEqual(response.status, 200)
+                        with self.assertRaises(urllib.error.HTTPError) as denied:
+                            urllib.request.urlopen(base + "/api/status", timeout=5)
+                        self.assertEqual(denied.exception.code, 403)
+                        denied.exception.close()
+            finally:
+                server.shutdown(); server.server_close(); worker.join(timeout=5)
+
+    def test_pwa_assets_are_public_but_study_api_stays_session_gated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = LocalApp(Path(tmp) / "data")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            base = f"http://127.0.0.1:{server.server_port}"
+            try:
+                with urllib.request.urlopen(base + "/manifest.webmanifest", timeout=5) as response:
+                    self.assertEqual(response.headers.get_content_type(), "application/manifest+json")
+                    manifest = json.load(response)
+                    self.assertEqual(manifest["start_url"], "/")
+                    self.assertEqual(manifest["display"], "standalone")
+                    self.assertEqual({icon["sizes"] for icon in manifest["icons"]},
+                                     {"192x192", "512x512"})
+                for size in (192, 512):
+                    with urllib.request.urlopen(base + f"/icon-{size}.png", timeout=5) as response:
+                        self.assertEqual(response.headers.get_content_type(), "image/png")
+                        self.assertEqual(response.read(8), b"\x89PNG\r\n\x1a\n")
+                with urllib.request.urlopen(base + "/sw.js", timeout=5) as response:
+                    sw = response.read().decode("utf-8")
+                    self.assertIn("url.pathname !== '/'", sw)
+                    self.assertNotIn("cache.put(event.request", sw)
+                    self.assertNotIn("/api/", sw)
+                with urllib.request.urlopen(base + "/offline.html", timeout=5) as response:
+                    self.assertIn(b"frameworkdistiller://open", response.read())
+                with self.assertRaises(urllib.error.HTTPError) as denied:
+                    urllib.request.urlopen(base + "/api/cards", timeout=5)
+                self.assertEqual(denied.exception.code, 403)
+                denied.exception.close()
+            finally:
+                server.shutdown(); server.server_close(); worker.join(timeout=5)
+
     def test_frozen_default_data_uses_local_appdata(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch("run.sys.frozen", True, create=True), patch.dict("run.os.environ", {"LOCALAPPDATA": tmp}):

@@ -47,6 +47,8 @@ def main() -> None:
         bundle.write(root / "README.md", "README.md")
         bundle.write(root / "LICENSE", "LICENSE")
         bundle.write(notices, notices.name)
+        bundle.write(root / "Install-FrameworkDistiller.ps1", "Install-FrameworkDistiller.ps1")
+        bundle.write(root / "Uninstall-FrameworkDistiller.ps1", "Uninstall-FrameworkDistiller.ps1")
     source_archive = output / f"FrameworkDistiller-v{__version__}-source.zip"
     android = root / "android"
     android_sources = [android / name for name in ("settings.gradle", "build.gradle", "gradle.properties",
@@ -59,12 +61,16 @@ def main() -> None:
     android_sources += list((android / "app" / "src" / "main" / "res").rglob("*.xml"))
     source_files = [root / "README.md", root / "LICENSE", notices, root / "requirements.txt", root / "requirements-build.txt",
                     root / "run.py", root / "refresh_local.py", root / "build_windows.py",
-                    root / "build_notices.py", root / "prepare_android.py",
+                    root / "build_notices.py", root / "prepare_android.py", root / "generate_icons.py",
+                    root / "Install-FrameworkDistiller.ps1", root / "Uninstall-FrameworkDistiller.ps1",
                     root / "Start Framework Distiller.cmd", root / ".gitignore",
                     *sorted((root / "third_party_licenses").iterdir()),
                     *sorted((root / "distiller").glob("*.py")),
                     *sorted((root / "static").iterdir()),
-                    *sorted((root / "tests").glob("*.py")), *android_sources]
+                    *sorted((root / "tests").glob("*.py")),
+                    *sorted((root / "tests").glob("*.mjs")),
+                    *sorted((root / "tests").glob("*.cjs")),
+                    *sorted((root / "tests").glob("*.java")), *android_sources]
     with zipfile.ZipFile(source_archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for path in source_files:
             bundle.write(path, path.relative_to(root).as_posix())

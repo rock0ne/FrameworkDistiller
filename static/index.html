@@ -4,38 +4,42 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0b2026">
   <title>Framework Distiller — local study</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <a class="skip" href="#results">Skip to study cards</a>
+  <a class="skip" href="#reader-panel">Skip to document reader</a>
   <header class="masthead">
     <div class="brand"><span class="mark" aria-hidden="true">FD</span><div><strong>Framework Distiller</strong><small>Read once. Map everywhere.</small></div></div>
-    <div class="local-pill" id="activity-badge">● Local study · AI off by default</div>
+    <div class="mast-actions"><button id="install-app" class="secondary" type="button">Install as app</button><button id="open-faq" class="secondary help-link" type="button">Help / FAQ</button><div class="local-pill" id="activity-badge">● Local study · AI off by default</div></div>
   </header>
-  <div class="boundary">Distilled summary — verify authoritative wording against pinned source citation. Auditor risks, tests and traps are interpretations, not quotes or legal advice. “Mastered” is self-reported study progress, not validated competence.</div>
+  <div class="boundary">Read in source order. Offline maps are structural aids; AI results are interpretations. Verify wording against the pinned document. “Mastered” is self-reported progress, not validated competence.</div>
   <div class="layout">
     <aside class="side" aria-label="Sources and filters">
-      <section class="panel">
-        <h2>Official NIST sources</h2>
+      <details class="panel">
+        <summary class="ai-summary">Framework presets (NIST)</summary>
         <p class="muted">Download only when you choose. Each exact file is kept locally with a SHA-256 pin.</p>
         <div id="official-sources" class="stack"></div>
-      </section>
-      <details class="panel" id="storage-settings">
-        <summary class="ai-summary">Storage and import location</summary>
+      </details>
+      <details class="panel" id="storage-settings" open>
+        <summary class="ai-summary">Folders · type a path</summary>
         <p class="small">Your current study library is <code id="library-path" class="path"></code> Changing location does not move or delete an existing library; select its previous folder to return to it. No files are imported automatically.</p>
         <div id="desktop-storage-controls" class="source-form">
           <label>Study library folder (database and pinned copies) <input id="storage-path" type="text" maxlength="1024" spellcheck="false" autocomplete="off"></label>
-          <label>Import inbox folder (leave blank to use the library’s inbox) <input id="inbox-setting" type="text" maxlength="1024" spellcheck="false" autocomplete="off"></label>
+          <label>Import inbox folder · type an absolute path (blank uses the library’s inbox) <input id="inbox-setting" type="text" maxlength="1024" spellcheck="false" autocomplete="off"></label>
           <button id="save-storage" type="button">Use these folders</button>
           <p class="small">Enter absolute folder paths you control. A new library starts empty; the old one remains untouched. Network or removable folders must be available whenever you use them.</p>
           <button id="quit-app" type="button" class="secondary">Quit desktop app</button>
         </div>
-        <p id="android-storage-info" class="small" hidden>Android keeps its working database in private app storage. Tap “Local file” below to browse and import from any folder the Android picker can access; use Export to choose where your notes are saved. Android does not expose a writable database path to this app.</p>
+        <p id="temporary-storage-info" class="small" hidden>This temporary preview has a fixed test library and cannot save folder paths. Open the installed Framework Distiller launcher to choose a permanent library or inbox location.</p>
+        <p id="android-storage-info" class="small" hidden>Android keeps its working database in private app storage. Use “Local file” for one document or “Choose a folder on this device” to review and import a bounded folder. Use Export to choose where your notes are saved; Android does not expose a writable database path to this app.</p>
         <p id="storage-message" class="small" role="status" aria-live="polite"></p>
       </details>
-      <section class="panel">
+      <section class="panel" id="add-document">
         <h2>Add a document</h2>
         <p class="muted">Choose a local reading file, or pull a direct public link from NIST, Bank of England, FCA, NCSC, IIA or OWASP. Local files stay on this device.</p>
         <div class="source-form">
@@ -48,12 +52,23 @@
           <div class="source-actions"><button id="upload-file" type="button">Add selected file</button><button id="pull-link" type="button">Pull official link</button></div>
           <p id="source-message" class="small" role="status" aria-live="polite">Local: PDF, EPUB, DOCX, ODT, PPTX, RTF, Markdown, text and HTML. Each file is hash-pinned; an optional URL is not byte-verified. Public link pulls are restricted to approved official hosts.</p>
         </div>
-        <details><summary>Import folder (inbox)</summary>
-          <p class="muted">Files in this folder are listed after you press Refresh. A <code>.source.json</code> sidecar is optional; without one, the file is labelled “Local copy” with no claimed publisher link.</p>
+        <details open><summary>Import folder (inbox) · choose files below</summary>
+          <p class="muted">Type a folder path under “Folders” above, or choose a folder below. Nothing imports until you press an import button. A <code>.source.json</code> sidecar is optional for the typed inbox path; without one, the file is labelled “Local copy” with no claimed publisher link.</p>
           <code id="inbox-path" class="path"></code>
-          <button id="refresh-inbox" type="button" class="secondary">Refresh inbox</button>
+          <div class="source-actions"><button id="change-inbox" type="button" class="secondary">Edit inbox path</button><button id="refresh-inbox" type="button" class="secondary">Refresh inbox</button><button id="import-inbox-all" type="button" class="secondary">Import all listed</button></div>
           <p id="inbox-summary" class="small" role="status" aria-live="polite"></p>
           <div id="inbox-files" class="stack"></div>
+          <div id="folder-picker-controls">
+            <label>Or choose a folder to import <input id="folder-files" type="file" webkitdirectory multiple></label>
+            <p class="small">The picker reads supported files from the chosen folder and its subfolders. It does not move them or retain the folder path. Files over 25 MB and unsupported types are skipped.</p>
+            <button id="import-folder" type="button" class="secondary" disabled>Import chosen folder</button>
+            <p id="folder-summary" class="small" role="status" aria-live="polite"></p>
+          </div>
+          <div id="android-folder-controls" hidden>
+            <button id="android-choose-folder" type="button" class="secondary">Choose a folder on this device</button>
+            <p class="small">Android will open its folder picker. Review the supported-file count before confirming; files are copied into this app’s private library, not moved.</p>
+            <p id="android-folder-summary" class="small" role="status" aria-live="polite"></p>
+          </div>
         </details>
       </section>
       <section class="panel">
@@ -62,33 +77,153 @@
       </section>
       <details class="panel" id="ai-settings">
         <summary class="ai-summary">Optional AI study assistant · off by default</summary>
-        <p class="muted">Off until you add your own API key. Keys stay in this app's memory only and disappear when it closes; they are never bundled, saved to the study database, or exported. Each question sends only the displayed card's source excerpt (up to 4,000 characters) and the question you type to your chosen provider. Notes and answers are never sent. Provider API charges are yours; a ChatGPT, Claude or Gemini subscription may not include API use.</p>
+        <p class="muted">Off until you add your own API key. Keys stay in this app's memory only and disappear when it closes; they are never bundled, saved to the study database, or exported. For reader actions, review the exact bounded text preview and press Send separately. Notes and answers are never sent. Provider API charges are yours; a ChatGPT, Claude or Gemini subscription may not include API use.</p>
         <p class="small">Do not send confidential employer policies, personal data, or regulated material to a personal API account unless you are authorised.</p>
         <label class="ai-label">Provider <select id="ai-provider"><option value="">Off</option><option value="openai">ChatGPT (OpenAI API)</option><option value="anthropic">Claude (Anthropic API)</option><option value="gemini">Gemini (Google API)</option></select></label>
         <label class="ai-label">Model ID <input id="ai-model" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="Choose a provider for the default model"></label>
         <p class="small">You can change this session-only model ID if your API account needs a different supported model. Check the provider's current model list; no cloud call is made to validate it here.</p>
         <label class="ai-label">Your API key for this session <input id="ai-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your own key"></label>
-        <div class="source-actions"><button type="button" id="ai-use-key">Use key</button><button type="button" id="ai-forget" class="secondary">Forget key</button></div>
+        <div class="source-actions"><button type="button" id="ai-use-key">Use key</button><button type="button" id="ai-test" class="secondary">Test connection · optional live call</button><button type="button" id="ai-forget" class="secondary">Forget key</button></div>
         <p id="ai-status" class="small" role="status" aria-live="polite">AI is off. No key is included.</p>
         <p class="small">Get a key from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI</a>, <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Anthropic</a>, or <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>. Check that provider's current pricing and data terms first.</p>
       </details>
     </aside>
     <main id="results" tabindex="-1">
       <section class="hero">
-        <div><p class="eyebrow">AUDITOR STUDY DESK</p><h1>Only the decision-useful parts.</h1><p>Scan the core rule, test it like a senior auditor, then open the exact source. Similar themes sit together—never treated as equivalent obligations.</p></div>
+        <div><p class="eyebrow">SEQUENTIAL STUDY DESK</p><h1>Understand the whole before the parts.</h1><p>Choose a document, explore its clickable structure, read chapters in order, then build key points and mind maps from the pinned text. No shuffled shards.</p><button class="import-shortcut link-button" id="import-shortcut" type="button">Add or import a document ↓</button></div>
         <div class="hero-stat"><strong id="shown-count">0</strong><span id="shown-label">cards in view</span></div>
       </section>
-      <section class="toolbar" aria-label="Study filters">
+      <section class="reader-toolbar" aria-label="Document and study lens">
+        <label>Document <select id="document-select"><option value="">Choose a document</option></select></label>
+        <label>Study lens <select id="study-lens"><option value="general">General Study</option><option value="audit">IT Audit / GRC</option><option value="blue">Security Ops / Blue Team</option><option value="builder">Engineering / Builder</option></select></label>
+      </section>
+      <section id="reader-panel" class="reader-panel" tabindex="-1" aria-label="Sequential document reader">
+        <details id="document-outline" class="outline-panel" open>
+          <summary>Document overview · chapters → pages</summary>
+          <p class="small">A source-order navigation tree, not an AI summary. Select a chapter or page to read its pinned text.</p>
+          <div id="outline-list" class="outline-list"></div>
+        </details>
+        <div class="reader-nav">
+          <label>Chapter / section <select id="chapter-select"><option value="">Choose a chapter</option></select></label>
+          <label>Page / segment <select id="page-select"><option value="">Choose a page</option></select></label>
+          <label class="front-toggle"><input id="show-front" type="checkbox"> Show front matter</label>
+        </div>
+        <p id="reader-status" class="small" role="status" aria-live="polite">Choose a document to start reading in order.</p>
+        <article class="reading-page" id="reading-page">
+          <h2 id="reader-title">No document selected</h2>
+          <p id="reader-meta" class="small"></p>
+          <div id="reader-text" class="reader-text">Your document's extracted reading text will appear here.</div>
+          <div class="reader-step"><button id="prev-page" type="button" class="secondary">← Previous</button><button id="next-page" type="button" class="secondary">Next →</button></div>
+        </article>
+        <details class="share-panel" id="email-share">
+          <summary>Share a thought or source snippet by email</summary>
+          <p class="small">Review the exact draft before opening your email app. Nothing is sent by Framework Distiller. Do not share confidential or copyrighted material without permission; no whole book or file is attached.</p>
+          <label>Your thought (optional, max 500 characters) <textarea id="share-thought" maxlength="500" placeholder="What did you learn or want to ask?"></textarea></label>
+          <label>Source snippet (optional, max 900 characters) <textarea id="share-snippet" maxlength="900" placeholder="Select text in the reading page, then choose Use selection."></textarea></label>
+          <div class="source-actions"><button id="share-selection" type="button" class="secondary">Use selected reading text</button><button id="share-preview" type="button">Review email draft</button></div>
+          <section id="share-review" hidden aria-label="Exact email draft review">
+            <h3>Review this email draft</h3><pre id="share-draft"></pre>
+            <div class="source-actions"><button id="share-open-email" type="button">Open email app with this draft</button><button id="share-cancel" type="button" class="secondary">Cancel</button></div>
+          </section>
+          <p id="share-status" class="small" role="status" aria-live="polite"></p>
+        </details>
+        <section class="comprehension" aria-label="Comprehension actions">
+          <h2>Build understanding</h2>
+          <p class="small">Offline actions use extracted source structure and key sentences. AI can synthesize a bounded, diverse sample only after you review the exact preview; a file-wide result is not a claim that every page was analysed.</p>
+          <label>Action mode <select id="study-mode"><option value="offline">Offline structural aid</option><option value="ai">Enhance with my BYOK AI key</option></select></label>
+          <div class="action-grid">
+            <button type="button" data-study-action="file_points">Key points: this file</button>
+            <button type="button" data-study-action="chapter_points">Key points: this chapter</button>
+            <button type="button" data-study-action="page_points">Summarise: this page</button>
+            <button type="button" data-study-action="file_map">Mind map: this file</button>
+            <button type="button" data-study-action="page_map">Mind map: this page</button>
+            <button type="button" data-study-action="chapter_map">Mind map: this chapter</button>
+          </div>
+          <div class="ask-panel">
+            <h3>Ask your own question</h3>
+            <p class="small">Choose a page, chapter, or file scope. The preview shows representative excerpts and exactly what will be sent; a file-wide question cannot prove every page was covered.</p>
+            <label>Question scope <select id="ask-scope"><option value="page">This page</option><option value="chapter">This chapter</option><option value="file">This file · sampled</option></select></label>
+            <label>Your question <textarea id="ask-question" maxlength="500" placeholder="For example: How does this control work, what could go wrong, and what does this source leave unresolved?"></textarea></label>
+            <button type="button" id="ask-ai">Ask AI · review exact preview first</button>
+          </div>
+          <section id="ai-preview" class="ai-preview" hidden aria-label="Exact AI request preview">
+            <h3>Review before sending</h3>
+            <p id="ai-preview-meta"></p>
+            <p class="small">Provider charges may apply. Do not send confidential employer policies or personal/regulated data without authorisation. This text is untrusted source data, not instructions.</p>
+            <pre id="ai-preview-text"></pre>
+            <p class="small">Study instruction sent with the source text:</p><pre id="ai-preview-instruction"></pre>
+            <div class="source-actions"><button id="ai-preview-send" type="button">Send exactly this text</button><button id="ai-preview-cancel" type="button" class="secondary">Cancel</button></div>
+          </section>
+          <p id="study-message" class="small" role="status" aria-live="polite"></p>
+          <section id="study-result" class="study-result" hidden aria-label="Study result"></section>
+          <div id="study-exports" class="source-actions" hidden><button type="button" id="export-study-md" class="secondary">Export result · Markdown</button><button type="button" id="export-study-svg" class="secondary">Export map · SVG</button></div>
+          <details id="reader-challenge"><summary>Challenge me · open-ended recall</summary><p id="reader-challenge-prompt"></p><textarea id="reader-challenge-answer" aria-label="Your private, unsaved practice answer" placeholder="Answer in your own words. This draft stays on this screen and is not sent to AI."></textarea><p class="small">This answer is not saved or graded. Copy it elsewhere if you want to keep it.</p></details>
+        </section>
+      </section>
+      <details id="card-study" class="card-study">
+        <summary>Explore source cards and self-reported progress</summary>
+      <section class="toolbar" aria-label="Card filters">
         <label>Search <input id="search" type="search" placeholder="Control, source, or topic" autocomplete="off"></label>
         <label>Theme <select id="theme"><option value="">All themes</option></select></label>
         <label>Depth <select id="depth"><option value="">All depths</option><option value="Senior / Executive" selected>Senior / Executive</option><option value="Core">Core</option></select></label>
         <label>Progress <select id="state"><option value="">All</option><option value="unread">Unread</option><option value="read">Read</option><option value="mastered">Mastered</option></select></label>
-        <label>Study set <select id="study-set"><option value="focus">Focus 10 unread</option><option value="all">All matching</option></select></label>
+        <label>Study set <select id="study-set"><option value="all">All matching in source order</option></select></label>
         <button id="export" class="secondary" type="button">Export all filtered</button>
       </section>
       <div class="summary-row"><span id="message" role="status" aria-live="polite"></span><button type="button" id="clear-filters" class="link-button">Clear filters</button></div>
       <div id="cards" class="cards"></div>
       <section id="empty" class="empty" hidden><h2>No cards yet</h2><p>Import an official NIST source on the left, or adjust the filters. The first download may take a few seconds.</p></section>
+      </details>
+      <dialog class="faq-panel" id="install-help" aria-labelledby="install-help-title">
+        <div class="faq-head"><h2 id="install-help-title">Install or manage the Edge app</h2><button id="close-install-help" type="button" class="secondary">Close</button></div>
+        <p id="install-help-state"></p>
+        <p>If Framework Distiller is already installed in Edge, type <code>edge://apps</code> in Edge's address bar. Open its <strong>Details</strong> to pin it to the taskbar or Start.</p>
+        <p>If it is not installed and Edge does not show a prompt, use <strong>Edge ⋯ → More tools → Apps → Install this site as an app</strong>. Edge or a device policy may still withhold that command.</p>
+        <p>Install only from the normal Windows launcher, not a temporary preview address. Edge treats different localhost ports as different apps; a preview shortcut can outlive its test service.</p>
+        <p>The Edge shortcut opens the page, but it cannot start the local study service. Keep the separate <strong>Framework Distiller Windows launcher</strong> installed and use it after a reboot or whenever the page says the service has stopped.</p>
+        <p><a href="frameworkdistiller://open">Open the Windows launcher</a></p>
+      </dialog>
+      <dialog class="faq-panel" id="faq" aria-labelledby="faq-title">
+        <div class="faq-head"><h2 id="faq-title">Help / FAQ</h2><button id="close-faq" type="button" class="secondary">Close</button></div>
+        <details>
+          <summary>How do I run the Windows app without a command window?</summary>
+          <p>Extract the Windows-x64 ZIP and double-click <code>FrameworkDistiller-v0.5.5.exe</code>. The portable app includes its own runtime, starts the local study service, and opens your browser; no Command Prompt needs to stay open. Use <strong>Folders · type a path → Quit desktop app</strong> to stop it. Your library is stored separately under your Windows user-data folder or the folder you choose.</p>
+          <p>For a stable Start-menu and taskbar launcher, run <code>Install-FrameworkDistiller.ps1</code> from the extracted ZIP for your Windows account, then pin <strong>Framework Distiller</strong> from Start. This launcher starts the service even after a reboot. The header's <strong>Install as app</strong> button uses Edge's prompt when available; otherwise it shows the manual Edge menu and installed-app instructions. An Edge shortcut opens the study page but cannot start the service by itself. If the service is closed, its offline page can hand off to the installed Windows launcher.</p>
+        </details>
+        <details>
+          <summary>How do I pull a document from a web link?</summary>
+          <p>Open <strong>Add a document</strong>. Enter a title, version, publication date, and a direct public HTTPS document URL on an approved NIST, Bank of England, FCA, NCSC, IIA, or OWASP host. Add a publisher SHA-256 if you have one, then choose <strong>Pull official link</strong>. The app downloads only after that click, pins the bytes it received, and opens the imported document in source order.</p>
+          <p>A general webpage, login page, query-string link, redirected off-host URL, or unsupported format may be refused. If a publisher’s public link will not pull, download the document yourself and use <strong>Add selected file</strong>; the local import is hash-pinned but does not claim the supplied URL served those exact bytes.</p>
+        </details>
+        <details>
+          <summary>Which file types can I import locally?</summary>
+          <p>PDF, EPUB, DOCX, ODT, PPTX, RTF, Markdown, plain text, and HTML. Scanned PDFs without a text layer and images may not yield readable text. The app refuses files over its size or extraction limits instead of claiming complete coverage.</p>
+        </details>
+        <details>
+          <summary>Where are my documents and notes stored?</summary>
+          <p>On this device. On Windows, <strong>Folders · type a path</strong> lets you type separate absolute paths for the library and import inbox; switching folders does not move or delete the old library. Use <strong>Import all listed</strong> for that inbox, or <strong>Choose a folder to import</strong> to pick files without saving its path. The browser cannot disclose a folder's full device path, so a persistent inbox path must be typed. On Android, the working library stays in app-private storage; use the system picker for one file or a bounded folder import, and for exports.</p>
+        </details>
+        <details>
+          <summary>What does “AI interpretation” mean?</summary>
+          <p>It is a model’s study aid, not the authoritative framework wording, an audit finding, or proof of competence. Different providers may answer the same excerpt differently, and a short excerpt may not support an audit conclusion. Check the answer against the pinned source text and request additional evidence before making a real audit judgement.</p>
+        </details>
+        <details>
+          <summary>How do the key points, mind maps and custom questions work?</summary>
+          <p>The six action buttons cover file, chapter and page key points or maps. The clickable document overview covers the source-order structure of the imported file. Offline output extracts headings and key sentences; AI mode uses only the bounded excerpts in the preview. For a deeper question, choose page, chapter or sampled-file scope under <strong>Ask your own question</strong>. Neither a map nor a summary proves complete understanding; explain the idea back in your own words and check the pinned source.</p>
+        </details>
+        <details>
+          <summary>When is document text sent to an AI provider?</summary>
+          <p>Never during import or offline study. AI is off until you add your own key. <strong>Test connection</strong> sends a fixed harmless prompt without document text. A reader action sends only the exact bounded source text and instruction shown in the preview after you press Send. Keys stay in this app process’s memory and are excluded from exports; use <strong>Forget key</strong> when finished.</p>
+        </details>
+        <details>
+          <summary>How does email sharing work?</summary>
+          <p>Open a document page, expand <strong>Share a thought or source snippet by email</strong>, type a thought and/or choose a short selection from that page, then review the exact draft. The app opens your email client; you choose the recipient and decide whether to send. It does not attach a whole book, send email itself, or store the draft. Keep copyright, employer confidentiality, and personal data in mind.</p>
+        </details>
+        <details>
+          <summary>Can I sync my Windows and Android libraries through Vidatta?</summary>
+          <p>Not yet. Current libraries are device-local. A future owner-approved sync must be tested for authentication, conflicts, offline use, file rights and key exclusion before connecting either app to Vidatta. Email sharing is not library sync.</p>
+        </details>
+      </dialog>
     </main>
   </div>
 </body>

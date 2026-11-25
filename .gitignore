@@ -5,7 +5,9 @@ __pycache__/
 .build/
 dist/
 .venv/
+.venv-test/
 android/.gradle/
 android/app/build/
 android/app/src/main/python/distiller/
 android/app/src/main/assets/static/
+VIDATTA-SYNC-PLAN.md

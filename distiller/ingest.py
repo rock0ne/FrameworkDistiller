@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlparse
 from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
 
+from . import __version__
 from .catalog import OFFICIAL, allowed_dropin_url
 
 
@@ -61,7 +62,7 @@ def download_official(source_id: str) -> tuple[bytes, dict]:
     if source is None:
         raise IngestError("Unknown official source")
     request = urllib.request.Request(source.url, headers={
-        "User-Agent": "Mozilla/5.0 FrameworkDistiller/0.2 (local study tool)",
+        "User-Agent": f"Mozilla/5.0 FrameworkDistiller/{__version__} (local study tool)",
         "Accept": "application/json, application/pdf",
     })
     opener = urllib.request.build_opener(_BoundedRedirect())
@@ -96,14 +97,17 @@ def download_official(source_id: str) -> tuple[bytes, dict]:
     }
 
 
-def read_dropin(inbox: Path, name: str) -> tuple[bytes, dict]:
+def read_dropin(inbox: Path, name: str, *, max_batch_bytes: int = MAX_BYTES) -> tuple[bytes, dict]:
     _document_format(name)
+    if type(max_batch_bytes) is not int or not 1 <= max_batch_bytes <= 1024 * 1024 * 1024:
+        raise IngestError("Invalid remaining batch budget")
     path = inbox / name
     if path.is_symlink() or not path.is_file() or path.parent.resolve() != inbox.resolve():
         raise IngestError("File is not a regular inbox item")
     sidecar = inbox / f"{name}.source.json"
-    if path.stat().st_size > MAX_BYTES:
-        raise IngestError("Drop-in exceeds 25 MB")
+    limit = min(MAX_BYTES, max_batch_bytes)
+    if path.stat().st_size > limit:
+        raise IngestError("Drop-in exceeds the 25 MB file or remaining batch limit")
     if sidecar.is_symlink():
         raise IngestError("Source metadata must be a regular file")
     if sidecar.exists():
@@ -121,7 +125,12 @@ def read_dropin(inbox: Path, name: str) -> tuple[bytes, dict]:
         meta = {"title": Path(name).stem[:160], "version": "Local copy",
                 "publication_date": "Unknown", "source_url": "", "sha256": ""}
         provenance = "owner_uploaded_local_hash_only"
-    data = path.read_bytes()
+    # The directory listing is only a preflight: the file may grow before it is read.
+    # Never load more than the remaining batch budget plus one refusal byte.
+    with path.open("rb") as source:
+        data = source.read(limit + 1)
+    if len(data) > limit:
+        raise IngestError("Drop-in exceeds the 25 MB file or remaining batch limit")
     return read_uploaded(data, name, meta, provenance=provenance)
 
 
@@ -201,7 +210,7 @@ def download_public(url: str, title: str, version: str, publication_date: str,
     if not allowed_dropin_url(url) or len(url) > 2048:
         raise IngestError("Use a direct public HTTPS link on an approved primary-source host, without query parameters")
     request = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 FrameworkDistiller/0.2 (local study tool)",
+        "User-Agent": f"Mozilla/5.0 FrameworkDistiller/{__version__} (local study tool)",
         "Accept": "application/pdf, text/html",
     })
     opener = urllib.request.build_opener(_PublicRedirect())
